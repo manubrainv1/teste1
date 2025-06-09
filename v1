@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manubrain - Assistente de Conteúdo com OpenAI</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #171717; }
+        ::-webkit-scrollbar-thumb { background: #404040; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #525252; }
+        .main-chat-area::before, .input-area-container::before {
+            content: ''; position: absolute; left: 0; right: 0;
+            background: linear-gradient(to top, #171717, transparent);
+            pointer-events: none; z-index: 5;
+        }
+        .main-chat-area::before { top: 0; height: 40px; background: linear-gradient(to bottom, #171717, transparent); }
+        .input-area-container::before { bottom: 100%; height: 50px; }
+        .prompt-card, .sidebar-item { transition: background-color 0.2s ease-in-out; }
+        .prompt-card:hover, .sidebar-item:hover, .sidebar-item.active { background-color: #2a2a2a; }
+        .prose :where(p):where(:not([class~="not-prose"] *)) { margin-top: 0; margin-bottom: 0; }
+        .recording-dot {
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .project-folder > ul { display: none; }
+        .project-folder.open > ul { display: block; }
+    </style>
+</head>
+<body class="bg-neutral-900 text-white flex h-screen overflow-hidden">
+
+    <!-- Sidebar -->
+    <aside id="sidebar" class="w-64 bg-neutral-800 p-2 flex flex-col flex-shrink-0 absolute md:relative h-full z-30 transform -translate-x-full md:translate-x-0 transition-transform duration-300 ease-in-out">
+        <div class="flex items-center gap-2">
+            <button id="new-chat-button" class="sidebar-item cursor-pointer flex-1 flex items-center gap-3 p-2 rounded-lg hover:bg-neutral-700">
+                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                <span>Novo Chat</span>
+            </button>
+            <button id="new-project-button" class="sidebar-item p-2 rounded-lg hover:bg-neutral-700" title="Novo Projeto">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+            </button>
+        </div>
+        
+        <div id="sidebar-content" class="mt-4 flex-1 overflow-y-auto">
+            <h2 class="text-xs font-semibold text-neutral-400 px-2 mb-2">Agentes</h2>
+            <ul id="agent-list"></ul>
+            <div id="projects-container"></div>
+            <div id="history-container"></div>
+        </div>
+    </aside>
+
+    <!-- Área Principal do Chat -->
+    <main class="flex-1 flex flex-col relative main-chat-area">
+        <header class="md:hidden p-2 bg-neutral-800 flex items-center gap-2 z-20">
+            <button id="menu-toggle-button" class="p-2 rounded-lg hover:bg-neutral-700">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+            </button>
+            <h1 id="mobile-chat-title" class="text-lg font-medium truncate">Novo Chat</h1>
+        </header>
+
+        <div id="chat-container" class="flex-1 w-full overflow-y-auto">
+            <div id="splash-screen" class="flex flex-col items-center justify-center h-full p-4"></div>
+        </div>
+
+        <div class="input-area-container relative w-full pt-4 pb-6 bg-neutral-900">
+            <div class="w-full max-w-3xl mx-auto px-4">
+                 <div id="loading-indicator" class="hidden w-full mb-2"></div>
+                <div class="flex items-center bg-neutral-700/80 rounded-2xl p-2 shadow-md border border-neutral-600">
+                    <input type="file" id="file-input" class="hidden" accept=".txt,.js,.py,.html,.css,.json,.csv,.md">
+                    <button id="attach-file-button" class="p-2 rounded-full hover:bg-neutral-600 transition-colors">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                    </button>
+                    <input type="text" id="user-input" placeholder="Pergunte alguma coisa ao Manubrain..." class="flex-1 bg-transparent border-none focus:ring-0 outline-none text-white placeholder-gray-400 px-3 py-2.5">
+                    <button id="audio-input-button" class="p-2 rounded-full hover:bg-neutral-600 transition-colors">
+                        <svg id="mic-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+                        <svg id="stop-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" class="text-red-500 hidden"><rect width="12" height="12" x="6" y="6" rx="2" /></svg>
+                    </button>
+                    <button id="send-button" class="bg-neutral-200 text-black rounded-xl w-10 h-10 flex items-center justify-center ml-2 hover:bg-neutral-300 disabled:bg-neutral-600 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors flex-shrink-0">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M7 11L12 6L17 11M12 18V6"/></svg>
+                    </button>
+                </div>
+                 <div id="recording-status" class="hidden text-center text-sm text-neutral-400 pt-2 items-center justify-center gap-2">
+                    <div class="w-2 h-2 bg-red-500 rounded-full recording-dot"></div>
+                    <span>Gravando...</span>
+                </div>
+            </div>
+        </div>
+    </main>
+    
+    <div id="alert-modal" class="fixed inset-0 bg-black bg-opacity-70 z-50 hidden items-center justify-center p-4">
+        <div class="bg-neutral-800 rounded-lg p-6 max-w-sm w-full shadow-lg text-center border border-neutral-700">
+            <h3 id="alert-title" class="text-lg font-bold mb-3 text-white">Aviso</h3>
+            <p id="alert-message" class="text-neutral-300 mb-4"></p>
+            <button id="alert-close-button" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded w-full">OK</button>
+        </div>
+    </div>
+    
+    <script type="module">
+        // --- DEFINIÇÕES E ESTADO INICIAL ---
+        const elements = {
+            sidebarContent: document.getElementById('sidebar-content'),
+            chatContainer: document.getElementById('chat-container'), userInput: document.getElementById('user-input'),
+            sendButton: document.getElementById('send-button'), loadingIndicator: document.getElementById('loading-indicator'),
+            splashScreen: document.getElementById('splash-screen'), 
+            newChatButton: document.getElementById('new-chat-button'), 
+            newProjectButton: document.getElementById('new-project-button'), menuToggleButton: document.getElementById('menu-toggle-button'),
+            sidebar: document.getElementById('sidebar'), mobileChatTitle: document.getElementById('mobile-chat-title'),
+            alertModal: document.getElementById('alert-modal'), alertTitle: document.getElementById('alert-title'),
+            alertMessage: document.getElementById('alert-message'), alertCloseButton: document.getElementById('alert-close-button'),
+            audioInputButton: document.getElementById('audio-input-button'), micIcon: document.getElementById('mic-icon'),
+            stopIcon: document.getElementById('stop-icon'), recordingStatus: document.getElementById('recording-status'),
+            fileInput: document.getElementById('file-input'),
+            attachFileButton: document.getElementById('attach-file-button'),
+        };
+
+        const agents = {
+            default: { name: 'Manubrain Geral', systemPrompt: 'Você é o Manubrain, um assistente especialista em marketing digital e criação de conteúdo.' },
+            video: { name: 'Roteirista de Vídeos', systemPrompt: 'Você é o Manubrain como um especialista em roteiros para vídeos do YouTube. Suas respostas devem focar em estrutura de roteiro, ganchos, CTAs e storytelling para o formato de vídeo.' },
+            copy: { name: 'Copywriter de Anúncios', systemPrompt: 'Você é o Manubrain como um copywriter de resposta direta. Suas respostas devem ser persuasivas, focadas em conversão e seguir as melhores práticas de copywriting para anúncios em redes sociais.' }
+        };
+
+        let state = {
+            currentConversationId: localStorage.getItem('manubrain_currentConversationId') || null,
+            conversations: JSON.parse(localStorage.getItem('manubrain_conversations')) || [],
+            projects: JSON.parse(localStorage.getItem('manubrain_projects')) || [],
+            activeProjectId: localStorage.getItem('manubrain_activeProjectId') || null,
+            openAiApiKey: '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',
+            isRecording: false, mediaRecorder: null, audioChunks: [],
+            currentAgentKey: 'default'
+        };
+
+        const starterPrompts = [
+            { title: 'Crie uma imagem de um astronauta', description: 'surfando em uma onda cósmica', fullPrompt: 'Crie uma imagem de um astronauta surfando em uma onda cósmica, com cores vibrantes e nebulosas ao fundo.' },
+            { title: 'Escrever um roteiro para YouTube', description: 'sobre as últimas novidades em IA', fullPrompt: 'Escreva um roteiro curto para um vídeo do YouTube de 3 minutos sobre as últimas novidades em IA generativa.' },
+        ];
+        
+        // --- DECLARAÇÕES DE FUNÇÕES ---
+        
+        function showAlert(title, message) {
+            elements.alertTitle.textContent = title;
+            elements.alertMessage.textContent = message;
+            elements.alertModal.classList.remove('hidden');
+            elements.alertModal.classList.add('flex');
+        }
+        
+        function createMessageHtml(message, sender, type = 'text') {
+            let contentHtml = '';
+            if (type === 'image') {
+                contentHtml = `<div class="p-2 border border-neutral-700 rounded-lg inline-block"><img src="${message}" alt="Imagem gerada por IA" class="rounded-lg max-w-sm" /></div>`;
+            } else {
+                contentHtml = message.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, '<br>');
+            }
+            const avatarUser = `<div class="bg-blue-600 rounded-full w-8 h-8 flex items-center justify-center text-white font-bold text-lg flex-shrink-0 order-2"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>`;
+            const avatarAi = `<div class="bg-white rounded-full w-8 h-8 flex items-center justify-center text-black text-xl font-bold flex-shrink-0">M</div>`;
+            const avatarHtml = sender === 'user' ? avatarUser : avatarAi;
+            const justifyClass = sender === 'user' ? 'justify-end' : 'justify-start';
+            return `<div class="message-wrapper py-2 flex items-start gap-3 ${justifyClass}"><div class="${sender === 'user' ? 'order-2' : ''}">${avatarHtml}</div><div class="prose prose-invert max-w-[85%] rounded-lg p-3 text-white ${sender === 'user' ? 'bg-blue-600 rounded-br-none' : 'bg-neutral-700 rounded-bl-none'}"><p>${contentHtml}</p></div></div>`;
+        }
+        
+        function addMessageToUI(message, sender, isStreaming = false, type = 'text') {
+            elements.splashScreen.classList.add('hidden');
+            if (isStreaming) {
+                let lastMessageWrapper = elements.chatContainer.querySelector('.message-wrapper:last-child');
+                if (!lastMessageWrapper || !lastMessageWrapper.classList.contains('streaming')) {
+                    const messageHtml = createMessageHtml('', sender, type);
+                    elements.chatContainer.insertAdjacentHTML('beforeend', messageHtml);
+                    lastMessageWrapper = elements.chatContainer.querySelector('.message-wrapper:last-child');
+                    lastMessageWrapper.classList.add('streaming');
+                }
+                const contentDiv = lastMessageWrapper.querySelector('.prose > p');
+                contentDiv.innerHTML = message.replace(/\n/g, '<br>');
+            } else {
+                let streamingMessage = elements.chatContainer.querySelector('.streaming');
+                if (streamingMessage) {
+                    const contentDiv = streamingMessage.querySelector('.prose > p');
+                    contentDiv.innerHTML = message.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, '<br>');
+                    streamingMessage.classList.remove('streaming');
+                } else {
+                     elements.chatContainer.insertAdjacentHTML('beforeend', createMessageHtml(message, sender, type));
+                }
+            }
+            elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
+        }
+
+        function showLoadingIndicator(message) {
+            const avatarAi = `<div class="bg-white rounded-full w-8 h-8 flex items-center justify-center text-black text-xl font-bold flex-shrink-0">M</div>`;
+            const text = `<p class="text-neutral-400 text-sm">${message}</p>`;
+            const dots = `<div class="pt-1 flex items-center space-x-2"><span class="w-2 h-2 bg-gray-400 rounded-full animate-pulse"></span><span class="w-2 h-2 bg-gray-400 rounded-full animate-pulse" style="animation-delay: 0.2s;"></span><span class="w-2 h-2 bg-gray-400 rounded-full animate-pulse" style="animation-delay: 0.4s;"></span></div>`;
+            const loadingHtml = `<div class="message-wrapper py-5 flex items-center gap-5 px-5">${avatarAi}<div class="flex flex-col gap-2">${text}${dots}</div></div>`;
+            elements.loadingIndicator.innerHTML = loadingHtml;
+            elements.loadingIndicator.classList.remove('hidden');
+            elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
+        }
+        const hideLoadingIndicator = () => {
+             elements.loadingIndicator.classList.add('hidden');
+             elements.loadingIndicator.innerHTML = '';
+        }
+        
+        const saveState = () => {
+            localStorage.setItem('manubrain_conversations', JSON.stringify(state.conversations));
+            localStorage.setItem('manubrain_projects', JSON.stringify(state.projects));
+            localStorage.setItem('manubrain_currentConversationId', state.currentConversationId);
+            localStorage.setItem('manubrain_activeProjectId', state.activeProjectId);
+        };
+        
+        const renderSidebar = () => {
+            const { agentList, projectsContainer, historyContainer } = elements.sidebarContent.children;
+            if(!agentList || !projectsContainer || !historyContainer) return;
+
+            agentList.innerHTML = '';
+             Object.keys(agents).forEach(key => {
+                if (key === 'default') return;
+                const agent = agents[key];
+                const link = document.createElement('a');
+                link.href = '#';
+                link.className = `sidebar-item flex items-center gap-3 p-2 rounded-lg text-sm truncate ${key === state.currentAgentKey && state.currentConversationId === null ? 'active' : ''}`;
+                link.textContent = agent.name;
+                link.dataset.agent = key;
+                link.onclick = (e) => { e.preventDefault(); selectAgent(key); };
+                 const listItem = document.createElement('li');
+                listItem.appendChild(link);
+                agentList.appendChild(listItem);
+            });
+
+            projectsContainer.innerHTML = ''; 
+            if (state.projects.length > 0) {
+                 projectsContainer.innerHTML += `<h2 class="text-xs font-semibold text-neutral-400 px-2 mt-6 mb-2">Projetos</h2>`;
+            }
+            state.projects.forEach(project => {
+                const projectChats = state.conversations.filter(c => c.projectId === project.id);
+                const projectFolder = document.createElement('div');
+                projectFolder.className = 'project-folder';
+                if (project.id === state.activeProjectId) {
+                    projectFolder.classList.add('open');
+                }
+
+                const projectHeader = document.createElement('div');
+                projectHeader.className = `sidebar-item cursor-pointer flex items-center justify-between gap-3 p-2 rounded-lg ${project.id === state.activeProjectId ? 'active' : ''}`;
+                projectHeader.innerHTML = `<span class="truncate">${project.name}</span> <svg class="w-4 h-4 transition-transform ${project.id === state.activeProjectId ? 'rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>`;
+                projectHeader.onclick = () => toggleProject(project.id);
+                projectFolder.appendChild(projectHeader);
+                
+                const chatList = document.createElement('ul');
+                chatList.className = "pl-4";
+                projectChats.sort((a,b) => b.createdAt - a.createdAt).forEach(conv => {
+                    const chatLink = document.createElement('a');
+                    chatLink.href = '#';
+                    chatLink.className = `sidebar-item flex items-center gap-3 p-2 rounded-lg text-sm truncate ${conv.id === state.currentConversationId ? 'active' : ''}`;
+                    chatLink.textContent = conv.title;
+                    chatLink.dataset.id = conv.id;
+                    chatLink.onclick = (e) => { e.preventDefault(); loadConversation(conv.id); };
+                    const chatListItem = document.createElement('li');
+                    chatListItem.appendChild(chatLink);
+                    chatList.appendChild(chatListItem);
+                });
+                projectFolder.appendChild(chatList);
+                projectsContainer.appendChild(projectFolder);
+            });
+
+            historyContainer.innerHTML = '';
+            const unassignedChats = state.conversations.filter(c => !c.projectId);
+            if (unassignedChats.length > 0) {
+                historyContainer.innerHTML += `<h2 class="text-xs font-semibold text-neutral-400 px-2 mt-6 mb-2">Histórico</h2>`;
+                const historyList = document.createElement('ul');
+                unassignedChats.sort((a,b) => b.createdAt - a.createdAt).forEach(conv => {
+                    const link = document.createElement('a');
+                    link.href = '#';
+                    link.className = `sidebar-item flex items-center gap-3 p-2 rounded-lg text-sm truncate ${conv.id === state.currentConversationId ? 'active' : ''}`;
+                    link.textContent = conv.title;
+                    link.dataset.id = conv.id;
+                    link.onclick = (e) => { e.preventDefault(); loadConversation(conv.id); };
+                    const listItem = document.createElement('li');
+                    listItem.appendChild(link);
+                    historyList.appendChild(listItem);
+                });
+                historyContainer.appendChild(historyList);
+            }
+        };
+
+        const renderSplashScreen = () => {
+            elements.chatContainer.innerHTML = ''; 
+            const activeProject = state.projects.find(p => p.id === state.activeProjectId);
+            const agentName = agents[state.currentAgentKey].name;
+            let greeting = 'Olá! Sou o Manubrain.';
+            if(activeProject) {
+                greeting = `Novo Chat em "${activeProject.name}"`;
+            } else if (state.currentAgentKey !== 'default') {
+                greeting = `Olá! Sou o Manubrain como ${agentName}.`
+            }
+
+            elements.splashScreen.innerHTML = `<div class="w-16 h-16 bg-white rounded-full flex items-center justify-center mb-4 text-black text-3xl font-bold">M</div><h1 class="text-2xl font-medium mb-12">${greeting}</h1><div class="w-full max-w-3xl grid grid-cols-1 md:grid-cols-2 gap-3">${starterPrompts.map(p => `<div class="prompt-card cursor-pointer p-4 border border-neutral-700 rounded-lg" data-prompt="${p.fullPrompt}"><p class="text-base font-medium text-neutral-200">${p.title}</p><p class="text-sm text-neutral-400">${p.description}</p></div>`).join('')}</div>`;
+            elements.splashScreen.classList.remove('hidden');
+            document.querySelectorAll('.prompt-card').forEach(card => card.onclick = () => handleSendMessage(card.dataset.prompt));
+        };
+        
+        const startNewChat = () => {
+            state.currentConversationId = null;
+            saveState();
+            elements.chatContainer.innerHTML = '';
+            elements.mobileChatTitle.textContent = "Novo Chat";
+            renderSplashScreen();
+            renderSidebar();
+            if (window.innerWidth < 768) elements.sidebar.classList.add('-translate-x-full');
+            elements.userInput.focus();
+        };
+
+        const loadConversation = (id) => {
+            const conversation = state.conversations.find(c => c.id === id);
+            if (!conversation) { startNewChat(); return; }
+
+            state.currentConversationId = id;
+            state.currentAgentKey = conversation.agentKey || 'default';
+            state.activeProjectId = conversation.projectId || null;
+            saveState();
+
+            elements.chatContainer.innerHTML = '';
+            elements.splashScreen.classList.add('hidden');
+            
+            conversation.history.forEach(turn => {
+                addMessageToUI(turn.content, turn.role, false, turn.type || 'text');
+            });
+            
+            elements.mobileChatTitle.textContent = conversation.title;
+            renderSidebar();
+            elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
+            if (window.innerWidth < 768) elements.sidebar.classList.add('-translate-x-full');
+            elements.userInput.focus();
+        };
+
+        const selectAgent = (agentKey) => {
+            state.currentAgentKey = agentKey;
+            state.activeProjectId = null;
+            showAlert('Agente Ativado', `O agente "${agents[agentKey].name}" está pronto. Inicie um novo chat para começar.`);
+            startNewChat(); 
+        };
+        
+        const getDalleImage = async (prompt) => {
+            const headers = { 'Authorization': `Bearer ${state.openAiApiKey}`, 'Content-Type': 'application/json' };
+            const imagePrompt = prompt.replace(/^(crie|gere|desenhe|faça|manu gere)\s+(uma\s+)?(imagem|foto|ilustração|desenho)\s+de\s+/i, '');
+            const body = JSON.stringify({ model: 'dall-e-3', prompt: imagePrompt, n: 1, size: '1024x1024' });
+            try {
+                const response = await fetch('https://api.openai.com/v1/images/generations', { method: 'POST', headers, body });
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error?.message || `Erro na API DALL-E: ${response.statusText}`);
+                }
+                const result = await response.json();
+                return result.data[0].url;
+            } catch (error) {
+                console.error("Erro ao gerar imagem com DALL-E:", error);
+                return `Desculpe, não foi possível gerar a imagem. Erro: ${error.message}`;
+            }
+        };
+        
+        const streamChatCompletion = async (messages) => {
+            const systemPrompt = {role: "system", content: agents[state.currentAgentKey].systemPrompt };
+            const conversation = state.conversations.find(c => c.id === state.currentConversationId);
+            let finalMessages = [...messages];
+            
+            if (conversation && conversation.fileContext) {
+                 finalMessages.unshift({
+                    role: "system",
+                    content: `Use o seguinte conteúdo como contexto principal para responder às perguntas:\n\n---\n\n${conversation.fileContext}`
+                });
+            }
+            finalMessages.unshift(systemPrompt);
+
+            const response = await fetch('https://api.openai.com/v1/chat/completions', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${state.openAiApiKey}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model: 'gpt-3.5-turbo', messages: finalMessages, stream: true })
+            });
+             if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error?.message || `Erro na API: ${response.statusText}`);
+            }
+            hideLoadingIndicator();
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let fullResponse = "";
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                const chunk = decoder.decode(value);
+                const lines = chunk.split('\n');
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const data = line.substring(6);
+                        if (data.trim() === '[DONE]') break;
+                        try {
+                            const eventData = JSON.parse(data);
+                            if (eventData.choices[0].delta.content) {
+                                fullResponse += eventData.choices[0].delta.content;
+                                addMessageToUI(fullResponse, 'assistant', true, 'text');
+                            }
+                        } catch (e) {}
+                    }
+                }
+            }
+           return fullResponse;
+        };
+        
+        const handleApiRequest = async (prompt) => {
+            const isImageRequest = /(crie|gere|desenhe|faça|manu gere)\s+(uma\s+)?(imagem|foto|ilustração|desenho)/i.test(prompt);
+            showLoadingIndicator(isImageRequest ? 'MANU ESTÁ A CRIAR A SUA IMAGEM...' : 'MANU ESTÁ A DIGITAR...');
+
+            let assistantMessage;
+            if (isImageRequest) {
+                const imageUrl = await getDalleImage(prompt);
+                assistantMessage = { role: 'assistant', content: imageUrl, type: 'image' };
+                hideLoadingIndicator();
+                addMessageToUI(assistantMessage.content, 'assistant', false, 'image');
+            } else {
+                const conversation = state.conversations.find(c => c.id === state.currentConversationId);
+                const messagesForApi = conversation ? conversation.history.map(msg => ({role: msg.role, content: msg.content})) : [];
+                const fullResponse = await streamChatCompletion(messagesForApi);
+                assistantMessage = { role: 'assistant', content: fullResponse, type: 'text' };
+            }
+            return assistantMessage;
+        }
+
+        const handleSendMessage = async (promptText) => {
+            const prompt = promptText || elements.userInput.value.trim();
+            if (prompt === '') return;
+
+            elements.userInput.disabled = true;
+            elements.sendButton.disabled = true;
+
+            try {
+                let conversation = state.conversations.find(c => c.id === state.currentConversationId);
+                const userMessage = { role: 'user', content: prompt, type: 'text' };
+                
+                if (!conversation) {
+                    const title = prompt.substring(0, 30) + (prompt.length > 30 ? '...' : '');
+                    const newConversation = { 
+                        id: `chat_${Date.now()}`, 
+                        title, 
+                        history: [userMessage], 
+                        createdAt: Date.now(), 
+                        agentKey: state.currentAgentKey,
+                        projectId: state.activeProjectId,
+                        fileContext: null 
+                    };
+                    state.conversations.push(newConversation);
+                    state.currentConversationId = newConversation.id;
+                    conversation = newConversation;
+                    addMessageToUI(userMessage.content, 'user');
+                } else {
+                    addMessageToUI(userMessage.content, 'user');
+                    conversation.history.push(userMessage);
+                }
+
+                elements.userInput.value = '';
+                saveState();
+                renderSidebar();
+                
+                const assistantMessage = await handleApiRequest(prompt);
+                
+                if(assistantMessage) {
+                    conversation.history.push(assistantMessage);
+                    saveState();
+                }
+
+            } catch (error) {
+                console.error("Erro no fluxo de envio:", error);
+                showAlert('Erro de Processamento', `Não foi possível processar sua mensagem. Detalhes: ${error.message}`);
+                hideLoadingIndicator();
+            } finally {
+                elements.userInput.disabled = false;
+                elements.sendButton.disabled = false;
+                elements.userInput.focus();
+            }
+        };
+
+        const startRecording = async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                state.isRecording = true;
+                state.audioChunks = [];
+                const options = { mimeType: 'audio/webm' };
+                if (MediaRecorder.isTypeSupported && !MediaRecorder.isTypeSupported(options.mimeType)) {
+                    delete options.mimeType;
+                }
+                state.mediaRecorder = new MediaRecorder(stream, options);
+                state.mediaRecorder.ondataavailable = e => state.audioChunks.push(e.data);
+                state.mediaRecorder.onstop = async () => {
+                    const audioBlob = new Blob(state.audioChunks, { type: state.mediaRecorder.mimeType });
+                    const fileExtension = state.mediaRecorder.mimeType.split('/')[1].split(';')[0] || 'webm';
+                    const audioFile = new File([audioBlob], `recording.${fileExtension}`, { type: state.mediaRecorder.mimeType });
+                    
+                    showLoadingIndicator('A transcrever o áudio...');
+                    const transcribedText = await transcribeAudio(audioFile);
+                    hideLoadingIndicator();
+                    if(transcribedText) {
+                       await handleSendMessage(transcribedText);
+                    }
+                };
+                state.mediaRecorder.start();
+                elements.micIcon.classList.add('hidden');
+                elements.stopIcon.classList.remove('hidden');
+                elements.recordingStatus.classList.remove('hidden');
+                elements.recordingStatus.classList.add('flex');
+            } catch (err) {
+                console.error("Erro ao aceder ao microfone:", err);
+                showAlert('Erro de Microfone', 'Não foi possível aceder ao seu microfone. Por favor, verifique as permissões no seu navegador.');
+            }
+        };
+
+        const stopRecording = () => {
+            if (state.mediaRecorder && state.isRecording) {
+                state.mediaRecorder.stop();
+                state.isRecording = false;
+                elements.micIcon.classList.remove('hidden');
+                elements.stopIcon.classList.add('hidden');
+                elements.recordingStatus.classList.add('hidden');
+            }
+        };
+
+        const transcribeAudio = async (audioFile) => {
+            const formData = new FormData();
+            formData.append('file', audioFile);
+            formData.append('model', 'whisper-1');
+            try {
+                const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${state.openAiApiKey}` },
+                    body: formData
+                });
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error?.message || `Erro na API Whisper: ${response.statusText}`);
+                }
+                const result = await response.json();
+                return result.text;
+            } catch (error) {
+                showAlert('Erro de Transcrição', `Não foi possível transcrever o áudio: ${error.message}`);
+                return null;
+            }
+        };
+        
+        const handleFileUpload = (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const fileContent = e.target.result;
+                let conversation = state.conversations.find(c => c.id === state.currentConversationId);
+                
+                if (!conversation) {
+                    const title = `Ficheiro: ${file.name}`.substring(0, 30);
+                    const newConversation = { 
+                        id: `chat_${Date.now()}`, title, history: [], createdAt: Date.now(), 
+                        agentKey: state.currentAgentKey, projectId: state.activeProjectId,
+                        fileContext: fileContent 
+                    };
+                    state.conversations.push(newConversation);
+                    state.currentConversationId = newConversation.id;
+                    conversation = newConversation;
+                } else {
+                    conversation.fileContext = fileContent;
+                }
+
+                saveState();
+                renderSidebar();
+                
+                addMessageToUI(`Ficheiro "${file.name}" carregado. O que gostaria de saber sobre ele?`, 'assistant');
+            };
+            reader.onerror = () => {
+                showAlert('Erro de Leitura', 'Não foi possível ler o ficheiro selecionado.');
+            };
+            reader.readAsText(file);
+            elements.fileInput.value = '';
+        };
+
+        const createNewProject = () => {
+            const projectName = prompt("Qual é o nome do novo projeto?");
+            if (projectName && projectName.trim() !== '') {
+                const newProject = {
+                    id: `proj_${Date.now()}`,
+                    name: projectName.trim(),
+                    createdAt: Date.now()
+                };
+                state.projects.push(newProject);
+                state.activeProjectId = newProject.id;
+                saveState();
+                renderSidebar();
+                startNewChat();
+            }
+        };
+
+        const toggleProject = (projectId) => {
+            state.activeProjectId = state.activeProjectId === projectId ? null : projectId;
+            saveState();
+            renderSidebar();
+        };
+        
+        elements.alertCloseButton.onclick = () => {
+            elements.alertModal.classList.add('hidden');
+            elements.alertModal.classList.remove('flex');
+        };
+
+        document.addEventListener('DOMContentLoaded', () => {
+            elements.newChatButton.addEventListener('click', () => {
+                state.currentAgentKey = 'default';
+                state.activeProjectId = null;
+                startNewChat();
+            });
+            elements.newProjectButton.addEventListener('click', createNewProject);
+            elements.sendButton.addEventListener('click', () => handleSendMessage());
+            elements.userInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); handleSendMessage(); }});
+            
+            elements.attachFileButton.addEventListener('click', () => elements.fileInput.click());
+            elements.fileInput.addEventListener('change', handleFileUpload);
+            
+            elements.audioInputButton.addEventListener('mousedown', startRecording);
+            document.addEventListener('mouseup', stopRecording);
+             elements.audioInputButton.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                startRecording();
+            });
+            document.addEventListener('touchend', stopRecording);
+
+            elements.menuToggleButton.addEventListener('click', () => elements.sidebar.classList.toggle('-translate-x-full'));
+
+            const lastConversation = state.conversations.find(c => c.id === state.currentConversationId);
+            if (lastConversation) {
+                loadConversation(lastConversation.id);
+            } else {
+                startNewChat();
+            }
+        });
+    </script>
+</body>
+</html>
